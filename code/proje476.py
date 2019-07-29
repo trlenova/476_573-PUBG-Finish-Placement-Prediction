@@ -1,14 +1,49 @@
-import numpy as np 
+import numpy as np
 import pandas as pd 
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.ensemble import RandomForestRegressor
 import os
+import gc
+train_data = pd.read_csv('../input/train_V2.csv',nrows=2500000)
+X_test = pd.read_csv('../input/test_V2.csv')
+def reduce_mem_usage(df):
+         
+    
+    start_mem = df.memory_usage().sum() / 1024**2
+    print('Memory usage of dataframe is {:.2f} MB'.format(start_mem))
 
-train_data = pd.read_csv('../bil476proje/input/train_V2.csv',nrows=40000)
-test = pd.read_csv('../bil476proje/input/test_V2.csv',nrows=10000)
+    for col in df.columns:
+        col_type = df[col].dtype
 
+        if col_type != object:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+                elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                    df[col] = df[col].astype(np.int64)  
+            else:
+                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+                else:
+                    df[col] = df[col].astype(np.float64)
+
+    end_mem = df.memory_usage().sum() / 1024**2
+    print('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
+    print('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
+
+    return df
+reduce_mem_usage(train_data)
+reduce_mem_usage(X_test)
 
 train_data.drop(train_data[train_data['winPlacePerc']==np.NAN].index,inplace = True)
 
@@ -78,43 +113,50 @@ columns.remove("matchType")
 columns.remove("winPlacePerc")
 columns.remove("killWithoutMove")
 
+
+
 ##mean columns
 meanData = train_data.groupby(['matchId','groupId'])[columns].agg('mean')
+meanData = reduce_mem_usage(meanData)
 meanData = meanData.replace([np.inf, np.NINF,np.nan], 0)
 meanDataRank = meanData.groupby('matchId')[columns].rank(pct=True).reset_index()
+meanDataRank = reduce_mem_usage(meanDataRank)
 train_data = pd.merge(train_data, meanData.reset_index(), suffixes=["", "_mean"], how='left', on=['matchId', 'groupId'])
 del meanData
+gc.collect()
 train_data = train_data.drop(["vehicleDestroys_mean","rideDistance_mean","roadKills_mean","rankPoints_mean"], axis=1)
 train_data = pd.merge(train_data, meanDataRank, suffixes=["", "_meanRank"], how='left', on=['matchId', 'groupId'])
 del meanDataRank
+gc.collect()
 train_data = train_data.drop(["numGroups_meanRank","rankPoints_meanRank"], axis=1)
 train_data = train_data.join(train_data.groupby('matchId')[columns].rank(ascending=False).add_suffix('_rankPlace').astype(int))
 
+
+
 ##max
 maxData = train_data.groupby(['matchId','groupId'])[columns].agg('max')
+maxData = reduce_mem_usage(maxData)
 maxDataRank = maxData.groupby('matchId')[columns].rank(pct=True).reset_index()
+maxDataRank = reduce_mem_usage(maxDataRank)
 train_data = pd.merge(train_data, maxData.reset_index(), suffixes=["", "_max"], how='left', on=['matchId', 'groupId'])
 del maxData
+gc.collect()
 train_data = train_data.drop(["assists_max","killPoints_max","headshotKills_max","numGroups_max","revives_max","teamKills_max","roadKills_max","vehicleDestroys_max"], axis=1)
 train_data = pd.merge(train_data, maxDataRank, suffixes=["", "_maxRank"], how='left', on=['matchId', 'groupId'])
 del maxDataRank
+gc.collect()
 train_data = train_data.drop(["roadKills_maxRank","matchDuration_maxRank","maxPlace_maxRank","numGroups_maxRank"], axis=1)
 
-##min
-minData = train_data.groupby(['matchId','groupId'])[columns].agg('min')
-minDataRank = minData.groupby('matchId')[columns].rank(pct=True).reset_index()
-train_data = pd.merge(train_data, minData.reset_index(), suffixes=["", "_min"], how='left', on=['matchId', 'groupId'])
-del minData
-train_data = train_data.drop(["heals_min","killStreaks_min","killPoints_min","maxPlace_min","revives_min","headshotKills_min","weaponsAcquired_min","rankPoints_min","matchDuration_min","teamKills_min","numGroups_min","assists_min","roadKills_min","vehicleDestroys_min"], axis=1)
-train_data = pd.merge(train_data, minDataRank, suffixes=["", "_minRank"], how='left', on=['matchId', 'groupId'])
-del minDataRank
-train_data = train_data.drop(["killPoints_minRank","matchDuration_minRank","maxPlace_minRank","numGroups_minRank"], axis=1)
 
+
+  
 
 #number of grubs
 groupSize = train_data.groupby(['matchId','groupId']).size().reset_index(name='group_size')
+groupSize = reduce_mem_usage(groupSize)
 train_data = pd.merge(train_data, groupSize, how='left', on=['matchId', 'groupId'])
 del groupSize
+gc.collect()
 
 
 
@@ -122,22 +164,24 @@ del groupSize
 
 
 train = train_data.drop(['Id','groupId','matchId','killWithoutMove','kills','damageDealt','numGroups','swimDistance','playerJoined'],axis = 1)
-
+del train_data
+gc.collect()
 Y_train = train['winPlacePerc']
 X_train = train.drop(['winPlacePerc'],axis = 1)
 
 
-Y_train.head()
+
 
 from sklearn.metrics import mean_absolute_error
 
-m1 = RandomForestRegressor(n_estimators=80, min_samples_leaf=3, max_features=0.5,n_jobs=-1)
+m1 = RandomForestRegressor(n_estimators=60, min_samples_leaf=3, max_features=0.4,n_jobs=-1)
 m1.fit(X_train, Y_train)
-mean_absolute_error(m1.predict(X_train), Y_train)
 
 
-X_test = test.copy()
 
+
+test=X_test.copy()
+print("X_test")
 X_test['matchType'] = X_test['matchType'].map({
     'crashfpp':0,
     'crashtpp':0,
@@ -195,55 +239,59 @@ columns.remove("matchType")
 
 ##mean columns
 meanData = X_test.groupby(['matchId','groupId'])[columns].agg('mean')
+meanData = reduce_mem_usage(meanData)
 meanData = meanData.replace([np.inf, np.NINF,np.nan], 0)
 meanDataRank = meanData.groupby('matchId')[columns].rank(pct=True).reset_index()
+meanDataRank = reduce_mem_usage(meanDataRank)
 X_test = pd.merge(X_test, meanData.reset_index(), suffixes=["", "_mean"], how='left', on=['matchId', 'groupId'])
 del meanData
+gc.collect()
 X_test = X_test.drop(["vehicleDestroys_mean","rideDistance_mean","roadKills_mean","rankPoints_mean"], axis=1)
 X_test = pd.merge(X_test, meanDataRank, suffixes=["", "_meanRank"], how='left', on=['matchId', 'groupId'])
 del meanDataRank
+gc.collect()
 X_test = X_test.drop(["numGroups_meanRank","rankPoints_meanRank"], axis=1)
 X_test = X_test.join(X_test.groupby('matchId')[columns].rank(ascending=False).add_suffix('_rankPlace').astype(int))
 
+
 ##max
 maxData = X_test.groupby(['matchId','groupId'])[columns].agg('max')
+maxData = reduce_mem_usage(maxData)
 maxDataRank = maxData.groupby('matchId')[columns].rank(pct=True).reset_index()
+maxDataRank = reduce_mem_usage(maxDataRank)
 X_test = pd.merge(X_test, maxData.reset_index(), suffixes=["", "_max"], how='left', on=['matchId', 'groupId'])
 del maxData
+gc.collect()
 X_test = X_test.drop(["assists_max","killPoints_max","headshotKills_max","numGroups_max","revives_max","teamKills_max","roadKills_max","vehicleDestroys_max"], axis=1)
 X_test = pd.merge(X_test, maxDataRank, suffixes=["", "_maxRank"], how='left', on=['matchId', 'groupId'])
 del maxDataRank
+gc.collect()
 X_test = X_test.drop(["roadKills_maxRank","matchDuration_maxRank","maxPlace_maxRank","numGroups_maxRank"], axis=1)
 
-##min
-minData = X_test.groupby(['matchId','groupId'])[columns].agg('min')
-minDataRank = minData.groupby('matchId')[columns].rank(pct=True).reset_index()
-X_test = pd.merge(X_test, minData.reset_index(), suffixes=["", "_min"], how='left', on=['matchId', 'groupId'])
-del minData
-X_test = X_test.drop(["heals_min","killStreaks_min","killPoints_min","maxPlace_min","revives_min","headshotKills_min","weaponsAcquired_min","rankPoints_min","matchDuration_min","teamKills_min","numGroups_min","assists_min","roadKills_min","vehicleDestroys_min"], axis=1)
-X_test = pd.merge(X_test, minDataRank, suffixes=["", "_minRank"], how='left', on=['matchId', 'groupId'])
-del minDataRank
-X_test = X_test.drop(["killPoints_minRank","matchDuration_minRank","maxPlace_minRank","numGroups_minRank"], axis=1)
+
 
 
 #number of grubs
 groupSize = X_test.groupby(['matchId','groupId']).size().reset_index(name='group_size')
+groupSize = reduce_mem_usage(groupSize)
 X_test = pd.merge(X_test, groupSize, how='left', on=['matchId', 'groupId'])
 del groupSize
+gc.collect()
 
 
 
 
 
 
-print(list(X_test.columns).__len__())
-print(list(train_data.columns).__len__())
+
+
+
 X_test = X_test.drop(['Id','groupId','matchId','kills','damageDealt','numGroups','swimDistance','playerJoined'],axis = 1)
 
 
 
 
-np.shape(X_test),np.shape(test["Id"])
+
 I = np.clip(a = m1.predict(X_test), a_min = 0.0, a_max = 1.0)
 
 
